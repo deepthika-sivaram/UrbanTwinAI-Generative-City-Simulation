@@ -1,4 +1,3 @@
-# ml_models.py
 import numpy as np
 import joblib
 from utils.google_dm import dist_matrix
@@ -17,10 +16,21 @@ def _featurize_traffic(gdf):
     return X.reindex(columns=TRAFFIC_FEATS)
 
 class TrafficML:
-    """Predicts delay fraction 0..1 per grid cell."""
     def __init__(self, model_path="artifacts/traffic_lgbm.pkl"):
         self.model = joblib.load(model_path)
     def predict(self, grid_gdf):
         X = _featurize_traffic(grid_gdf)
         y = self.model.predict(X)
         return np.clip(y, 0.0, 1.0)
+    
+UHI_FEATS = ["building_count", "greenery_percent"]
+
+class UHIML:
+    def __init__(self, model_path="lst_model.pkl"):
+        self.model = joblib.load(model_path)
+    
+    def predict(self, grid_gdf):
+        if not all(feat in grid_gdf.columns for feat in UHI_FEATS):
+            raise ValueError(f"Missing required features: {UHI_FEATS}")
+        X = grid_gdf[UHI_FEATS].copy()
+        return self.model.predict(X)
