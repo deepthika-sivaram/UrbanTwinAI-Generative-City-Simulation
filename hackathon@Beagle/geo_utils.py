@@ -106,3 +106,78 @@ def features(grid, bld, roads, green):
     g["int_den"] = g["road_den"] * 0.8
     g["impervious"] = (g["building_cov"] + g["road_den"] * 0.02).clip(0, 1)
     return g
+
+from shapely.geometry import LineString, MultiLineString
+
+def _midpoint_geom(geom):
+    # normalized midpoint for LineString / longest part of MultiLineString
+    if isinstance(geom, LineString):
+        return geom.interpolate(0.5, normalized=True)
+    if isinstance(geom, MultiLineString) and len(geom.geoms):
+        longest = max(geom.geoms, key=lambda g: g.length)
+        return longest.interpolate(0.5, normalized=True)
+    # fallback (works for any geometry)
+    return geom.representative_point()
+
+def roads_with_grid_value(roads_gdf: gpd.GeoDataFrame,
+                          grid_gdf: gpd.GeoDataFrame,
+                          values: pd.Series) -> gpd.GeoDataFrame:
+    """
+    Assign each road segment a value from the grid cell its midpoint falls in.
+    Returns a GeoDataFrame with ['geometry','val'] in the ORIGINAL roads CRS.
+    """
+
+    # ---- 1) Align values to grid index and compute a safe fallback
+    vals = pd.Series(values).reindex(grid_gdf.index)
+    vals = pd.to_numeric(vals, errors="coerce")
+    fallback = float(vals.mean()) if pd.notna(vals.mean()) else 0.0
+
+    # ---- 2) Work in the grid CRS for the spatial join
+    roads_orig_crs = roads_gdf.crs
+    roads_tmp = roads_gdf.copy()
+    if roads_tmp.crs != grid_gdf.crs:
+        roads_tmp = roads_tmp.to_crs(grid_gdf.crs)
+
+    # ---- 3) Build midpoint points for join
+    roads_tmp["_mid"] = roads_tmp.geometry.apply(_midpoint_geom)
+    r_mid = roads_tmp.set_geometry("_mid")
+
+    g = grid_gdf.copy()
+    g["val"] = vals.values
+
+    # ---- 4) Spatial join (point-in-polygon)
+    joined = gpd.sjoin(r_mid, g[["geometry", "val"]], predicate="within", how="left")
+
+    # IMPORTANT: align back to the road index (sjoin may reorder)
+    vals_joined = joined["val"].reindex(r_mid.index)
+
+    # ---- 5) Attach values, fill gaps, restore original geometry/CRS
+    out = roads_tmp.copy()
+    out["val"] = vals_joined.values
+    out["val"] = out["val"].fillna(fallback)
+    out = out.set_geometry("geometry").drop(columns=["_mid"], errors="ignore")
+
+    if roads_orig_crs and out.crs != roads_orig_crs:
+        out = out.to_crs(roads_orig_crs)
+
+    return out[["geometry", "val"]]
+
+
+def build_rook_adjacency_from_grid(grid_gdf):
+    # grid is produced row-major by your grid_bbox; infer h,w
+    n = len(grid_gdf)
+    # best-effort: square-ish
+    w = int(round(np.sqrt(n)))
+    h = int(np.ceil(n / w))
+    A = np.zeros((n,n), dtype=int)
+    def idx(i,j): return i*w + j
+    for i in range(h):
+        for j in range(w):
+            u = idx(i,j)
+            if u >= n: break
+            for di,dj in [(1,0),(-1,0),(0,1),(0,-1)]:
+                ni,nj = i+di, j+dj
+                v = idx(ni,nj)
+                if 0 <= ni < h and 0 <= nj < w and v < n:
+                    A[u,v] = 1
+    return A
