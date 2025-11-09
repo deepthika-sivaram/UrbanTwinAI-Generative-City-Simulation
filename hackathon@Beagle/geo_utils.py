@@ -12,7 +12,6 @@ def _only_lines(gdf):
     return gdf[gdf.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
 
 def _fix_invalid_polys(gdf):
-    # buffer(0) fixes many invalid polygon issues
     gdf = gdf.copy()
     gdf["geometry"] = gdf.buffer(0)
     return gdf[~gdf.geometry.is_empty]
@@ -27,7 +26,6 @@ def fetch_osm(bbox):
     west, south, east, north = bbox
     polygon = box(west, south, east, north)
 
-    # OSMnx v2+ API
     bld = ox.features_from_polygon(polygon, tags={"building": True})
     roads_graph = ox.graph_from_polygon(polygon, network_type="drive")
     roads = ox.graph_to_gdfs(roads_graph, nodes=False, edges=True)
@@ -36,18 +34,15 @@ def fetch_osm(bbox):
         tags={"landuse": ["grass","forest","meadow","park"], "leisure": ["park","garden"]}
     )
 
-    # project to metric CRS
     crs_m = "EPSG:3857"
     bld   = bld.to_crs(crs_m)
     roads = roads.to_crs(crs_m)
     green = green.to_crs(crs_m)
 
-    # ✅ keep only valid types for our ops
     bld   = _only_polygons(bld)
     green = _only_polygons(green)
     roads = _only_lines(roads)
 
-    # ✅ repair invalid polygons (common in OSM)
     bld   = _fix_invalid_polys(bld)
     green = _fix_invalid_polys(green)
 
@@ -62,7 +57,6 @@ def grid_bbox(polygon_m, cell=50):
     return gpd.GeoDataFrame(geometry=cells, crs="EPSG:3857")
 
 def features(grid, bld, roads, green):
-    # work on copies and give every grid cell a stable id
     g = grid.copy()
     g["cell_area"] = g.geometry.area
     g2 = g[["geometry"]].reset_index().rename(columns={"index": "grid_id"})
@@ -87,22 +81,19 @@ def features(grid, bld, roads, green):
     g_area = g_area.reindex(g2["grid_id"]).fillna(0)
     g["green_cov"] = (g_area.values / g["cell_area"]).clip(0, 1)
 
-    # --- Roads: density (length per m²) ---
+    # --- Roads: density (length per m2) ---
     r2 = roads[["geometry"]].reset_index().rename(columns={"index": "road_id"})
 
-    # Replace the old overlay block with this:
-    r_clipped = gpd.clip(r2, g2)  # keep only road pieces inside grid cells
+    r_clipped = gpd.clip(r2, g2)  
     if r_clipped.empty:
         r_len = pd.Series(0, index=g2["grid_id"])
     else:
-        # tag each clipped segment with its grid_id
         r_clipped = gpd.sjoin(r_clipped, g2, predicate="intersects", how="left")
         r_len = r_clipped.length.groupby(r_clipped["grid_id"]).sum()
 
     r_len = r_len.reindex(g2["grid_id"]).fillna(0)
     g["road_den"] = (r_len.values / g["cell_area"])
 
-    # simple extras
     g["int_den"] = g["road_den"] * 0.8
     g["impervious"] = (g["building_cov"] + g["road_den"] * 0.02).clip(0, 1)
     return g
@@ -110,48 +101,37 @@ def features(grid, bld, roads, green):
 from shapely.geometry import LineString, MultiLineString
 
 def _midpoint_geom(geom):
-    # normalized midpoint for LineString / longest part of MultiLineString
     if isinstance(geom, LineString):
         return geom.interpolate(0.5, normalized=True)
     if isinstance(geom, MultiLineString) and len(geom.geoms):
         longest = max(geom.geoms, key=lambda g: g.length)
         return longest.interpolate(0.5, normalized=True)
-    # fallback (works for any geometry)
     return geom.representative_point()
 
 def roads_with_grid_value(roads_gdf: gpd.GeoDataFrame,
                           grid_gdf: gpd.GeoDataFrame,
                           values: pd.Series) -> gpd.GeoDataFrame:
-    """
-    Assign each road segment a value from the grid cell its midpoint falls in.
-    Returns a GeoDataFrame with ['geometry','val'] in the ORIGINAL roads CRS.
-    """
 
-    # ---- 1) Align values to grid index and compute a safe fallback
+
     vals = pd.Series(values).reindex(grid_gdf.index)
     vals = pd.to_numeric(vals, errors="coerce")
     fallback = float(vals.mean()) if pd.notna(vals.mean()) else 0.0
 
-    # ---- 2) Work in the grid CRS for the spatial join
     roads_orig_crs = roads_gdf.crs
     roads_tmp = roads_gdf.copy()
     if roads_tmp.crs != grid_gdf.crs:
         roads_tmp = roads_tmp.to_crs(grid_gdf.crs)
 
-    # ---- 3) Build midpoint points for join
     roads_tmp["_mid"] = roads_tmp.geometry.apply(_midpoint_geom)
     r_mid = roads_tmp.set_geometry("_mid")
 
     g = grid_gdf.copy()
     g["val"] = vals.values
 
-    # ---- 4) Spatial join (point-in-polygon)
     joined = gpd.sjoin(r_mid, g[["geometry", "val"]], predicate="within", how="left")
 
-    # IMPORTANT: align back to the road index (sjoin may reorder)
     vals_joined = joined["val"].reindex(r_mid.index)
 
-    # ---- 5) Attach values, fill gaps, restore original geometry/CRS
     out = roads_tmp.copy()
     out["val"] = vals_joined.values
     out["val"] = out["val"].fillna(fallback)
@@ -164,9 +144,7 @@ def roads_with_grid_value(roads_gdf: gpd.GeoDataFrame,
 
 
 def build_rook_adjacency_from_grid(grid_gdf):
-    # grid is produced row-major by your grid_bbox; infer h,w
     n = len(grid_gdf)
-    # best-effort: square-ish
     w = int(round(np.sqrt(n)))
     h = int(np.ceil(n / w))
     A = np.zeros((n,n), dtype=int)
