@@ -1,7 +1,8 @@
-# utils/google_dm.py
 import os, requests
+from dotenv import load_dotenv
+load_dotenv()
 
-API_KEY = "AIzaSyBZu_fK0_ydly6-SR5NF2wm-sjveQ6eSbQ"
+API_KEY = os.getenv("GOOGLE")
 URL = "https://maps.googleapis.com/maps/api/distancematrix/json"
 
 def dist_matrix(origin_lonlat, dest_lonlat, departure_time="now", traffic_model="best_guess"):
@@ -18,9 +19,3 @@ def dist_matrix(origin_lonlat, dest_lonlat, departure_time="now", traffic_model=
     t  = el["duration"]["value"]
     tt = el.get("duration_in_traffic", {}).get("value", t)
     return t, tt
-
-
-'''
-AIzaSyBZu_fK0_ydly6-SR5NF2wm-sjveQ6eSbQ
-
-'''
