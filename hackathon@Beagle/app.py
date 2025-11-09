@@ -303,21 +303,24 @@ if "sim" in st.session_state:
             scenario[["geometry"]],
             uhi_delta_series,
             f"UHI Δ (°C) — {uhi_backend}",
-            vmin=-1.0, vmax=1.0
+            vmin=-1.0, vmax=1.0,
+            fill_opacity=0.5,
         )
 
     elif layer_choice == "Traffic Δ":
         add_heat_layer(
             m, scenario[["geometry"]],
             traffic_delta, "Traffic Δ (fraction)",
-            vmin=-0.3, vmax=0.3
+            vmin=-0.3, vmax=0.3,
+            fill_opacity=0.5,
         )
 
     elif layer_choice == "Traffic level":
         add_heat_layer(
             m, scenario[["geometry"]],
             vis_level, "Traffic level (roads-weighted)",
-            vmin=VMIN, vmax=VMAX
+            vmin=VMIN, vmax=VMAX,
+            fill_opacity=0.5,
         )
 
     elif layer_choice == "PM2.5":
@@ -334,7 +337,7 @@ if "sim" in st.session_state:
             pm_norm_signed,                 
             "Δ PM2.5 (μg/m³) — signed",     
             vmin=-1.0, vmax=1.0,            
-            fill_opacity=0.85, line_opacity=0.15,
+            fill_opacity=0.5, line_opacity=0.15,
         )
 
     elif layer_choice == "Traffic (roads)":
